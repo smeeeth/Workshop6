@@ -3,6 +3,7 @@ var express = require('express');
 var bodyParser = require('body-parser');
 var database = require('./database');
 var StatusUpdateSchema = require('./schemas/statusupdate.json');
+var CommentSchema = require('./schemas/comment.json');
 var validate = require('express-jsonschema').validate;
 var writeDocument = database.writeDocument;
 var addDocument = database.addDocument;
@@ -18,6 +19,91 @@ app.use(bodyParser.json());
 // You run the server from `server`, so `../client/build` is `server/../client/build`.
 // '..' means "go up one directory", so this translates into `client/build`!
 app.use(express.static('../client/build'));
+
+
+function postComment(feedItemId, author, contents) {
+    var feedItem = readDocument('feedItems', feedItemId);
+    var time = new Date().getTime();
+    feedItem.comments.push({
+        "author": author,
+        "contents": contents,
+        "postDate": time,
+        "likeCounter": []
+      });
+
+    writeDocument('feedItems', feedItem);
+    return getFeedItemSync(feedItemId);
+}
+
+function likeComment(feedId,commentIndex, userId) {
+  var comments = readDocument('feedItems', feedId);
+  var comm = comments.comments[commentIndex];
+  if(comm.likeCounter.indexOf(userId) === -1){
+    comm.likeCounter.push(userId);
+    writeDocument('feedItems', comments);
+  }
+  comm.author = readDocument('users', comm.author);
+  return comm;
+}
+
+
+function unlikeComment(feedId, commentIndex, userId) {
+  var comments = readDocument('feedItems', feedId);
+  var comm = comments.comments[commentIndex];
+  var userIndex = comm.likeCounter.indexOf(userId);
+  if (userIndex !== -1) {
+    comm.likeCounter.splice(userIndex, 1);
+    writeDocument('feedItems', comments);
+  }
+  comm.author = readDocument('users', comm.author);
+  return comm;
+}
+
+// Like a comment
+app.put('/feeditem/:feeditemid/:commentIdx/likelist/:userid', function(req, res) {
+  var fromUser = getUserIdFromToken(req.get('Authorization'));
+  // Convert params from string to number.
+  var feedItemId = parseInt(req.params.feeditemid, 10);
+  var commentIdx = parseInt(req.params.commentIdx,10);
+  var userId = parseInt(req.params.userid, 10);
+  if (fromUser === userId) {
+    res.send(likeComment(feedItemId,commentIdx, userId));
+  } else {
+    // 401: Unauthorized.
+    res.status(401).end();
+  }
+});
+
+// Unlike a feed item.
+app.delete('/feeditem/:feeditemid/:commentIdx/likelist/:userid', function(req, res) {
+  var fromUser = getUserIdFromToken(req.get('Authorization'));
+  // Convert params from string to number.
+  var feedItemId = parseInt(req.params.feeditemid, 10);
+  var commentIdx = parseInt(req.params.commentIdx,10);
+  var userId = parseInt(req.params.userid, 10);
+  if (fromUser === userId) {
+    res.send(unlikeComment(feedItemId,commentIdx, userId));
+  } else {
+    // 401: Unauthorized.
+    res.status(401).end();
+  }
+});
+
+app.put('/feeditem/:feedItemId/comments', validate({
+    body: CommentSchema
+}), function(req, res) {
+    var body = req.body;
+    var fromUser = getUserIdFromToken(req.get('Authorization'));
+    if (fromUser === body.author) {
+        var comm = postComment(req.params.feedItemId, body.author, body.contents)
+        res.status(201);
+        res.send(comm);
+    } else {
+        res.status(401).end();
+    }
+});
+
+
 
 
 /**
